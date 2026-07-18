@@ -25,21 +25,54 @@ jobs:
           python -m pip install --upgrade pip
           pip install pillow arabic-reshaper python-bidi pywin32 pyinstaller
 
+      # نجمع ملفات Universal CRT (api-ms-win-crt-*) نسخة 32-بت من
+      # Windows SDK الموجود على الخادم، لندمجها داخل البرنامج.
+      # هذا يجعل البرنامج يعمل على ويندوز 7 دون تثبيت أي حزمة.
+      - name: تجهيز ملفات UCRT للدمج
+        shell: pwsh
+        run: |
+          $sdk = "C:\Program Files (x86)\Windows Kits\10\Redist"
+          $dll = Get-ChildItem -Path $sdk -Recurse -Filter "api-ms-win-crt-*.dll" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -match "\\x86\\" } |
+                 Select-Object -First 1
+          if (-not $dll) {
+            $store = "$env:WINDIR\System32\downlevel"
+            $dll = Get-ChildItem -Path $store -Filter "api-ms-win-crt-*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          New-Item -ItemType Directory -Force -Path ucrt | Out-Null
+          if ($dll) {
+            $src = Split-Path $dll.FullName
+            Write-Host "UCRT source: $src"
+            Copy-Item "$src\api-ms-win-*.dll" -Destination ucrt -Force -ErrorAction SilentlyContinue
+            Copy-Item "$src\ucrtbase.dll"     -Destination ucrt -Force -ErrorAction SilentlyContinue
+            Write-Host "تم نسخ $((Get-ChildItem ucrt).Count) ملف"
+          } else {
+            Write-Host "لم يُعثر على ملفات UCRT، سيُبنى البرنامج بدونها"
+          }
+
       # النسخة البسيطة (Tkinter) - الأنسب لويندوز 7
       - name: بناء النسخة الكلاسيكية (Tkinter)
-        run: >
-          pyinstaller --onefile --windowed --clean
-          --name Cafeteria
-          --collect-all arabic_reshaper
-          src/cafeteria_tk.py
+        shell: pwsh
+        run: |
+          $pyargs = @("--onefile","--windowed","--clean","--noupx",
+                    "--name","Cafeteria","--collect-all","arabic_reshaper")
+          if ((Get-ChildItem ucrt -ErrorAction SilentlyContinue).Count -gt 0) {
+            $pyargs += "--add-binary=ucrt/*;."
+          }
+          $pyargs += "src/cafeteria_tk.py"
+          pyinstaller @pyargs
 
       # النسخة الحديثة (واجهة ويب) - لويندوز 10 و11
       - name: بناء النسخة الحديثة (Web)
-        run: >
-          pyinstaller --onefile --windowed --clean
-          --name CafeteriaPro
-          --collect-all arabic_reshaper
-          src/cafeteria_web.py
+        shell: pwsh
+        run: |
+          $pyargs = @("--onefile","--windowed","--clean","--noupx",
+                    "--name","CafeteriaPro","--collect-all","arabic_reshaper")
+          if ((Get-ChildItem ucrt -ErrorAction SilentlyContinue).Count -gt 0) {
+            $pyargs += "--add-binary=ucrt/*;."
+          }
+          $pyargs += "src/cafeteria_web.py"
+          pyinstaller @pyargs
 
       - name: رفع الملفين الناتجين
         uses: actions/upload-artifact@v4
